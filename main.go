@@ -1,20 +1,27 @@
 package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-// TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
+type Notification struct {
+	ID      int
+	UserId  string
+	Channel string
+	Title   string
+	Body    string
+}
+
+func send(n Notification) {
+	fmt.Printf("[%s] #%d → %s: %s - %s\n", n.Channel, n.ID, n.UserId, n.Title, n.Body)
+}
+
 func main() {
-	//TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-	// to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-	s := "gopher"
-	fmt.Println("Hello and welcome, %s!", s)
+	notifications := []Notification{
+		{ID: 1, UserId: "user-1", Channel: "push", Title: "새 채팅", Body: "안녕하세요!"},
+		{ID: 2, UserId: "user-2", Channel: "sms", Title: "인증번호", Body: "123456"},
+		{ID: 3, UserId: "user-3", Channel: "email", Title: "주간 소식", Body: "이번 주 인기글을 확인하세요"},
+	}
 
-	for i := 1; i <= 5; i++ {
-		//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-		// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-		fmt.Println("i =", 100/i)
+	for _, n := range notifications {
+		send(n)
 	}
 }
