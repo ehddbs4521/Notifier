@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -114,6 +115,23 @@ func sendAllSequential(ns []Notification, senders map[string]Sender) Result {
 	return result
 }
 
+func sendAllConcurrent(ns []Notification, senders map[string]Sender) Result {
+	result := Result{}
+	var wg sync.WaitGroup
+
+	for _, n := range ns {
+		wg.Add(1)
+		go func(n Notification) {
+			defer wg.Done()
+			err := dispatch(n, senders)
+			result.add(err)
+		}(n)
+	}
+
+	wg.Wait()
+	return result
+}
+
 func main() {
 
 	senders := make(map[string]Sender)
@@ -123,10 +141,17 @@ func main() {
 
 	ns := makeNotifications(100)
 
-	start := time.Now() // 시작 시각
+	start := time.Now()
 	r := sendAllSequential(ns, senders)
-	elapsed := time.Since(start) // 지금까지 걸린 시간
+	elapsed := time.Since(start)
 
 	failCount := r.UnknownChannel + r.EmptyTitle + r.BodyTooLong
-	fmt.Printf("[순차] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d) / 걸린 시간 %.2fs", r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, elapsed.Seconds())
+	fmt.Printf("[순차] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d) / 걸린 시간 %.2fs\n", r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, elapsed.Seconds())
+
+	start = time.Now()
+	r = sendAllConcurrent(ns, senders)
+	elapsed = time.Since(start)
+
+	failCount = r.UnknownChannel + r.EmptyTitle + r.BodyTooLong
+	fmt.Printf("[동시] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d) / 걸린 시간 %.2fs\n", r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, elapsed.Seconds())
 }
