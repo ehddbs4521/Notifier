@@ -118,13 +118,16 @@ func sendAllSequential(ns []Notification, senders map[string]Sender) Result {
 func sendAllConcurrent(ns []Notification, senders map[string]Sender) Result {
 	result := Result{}
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 
 	for _, n := range ns {
 		wg.Add(1)
 		go func(n Notification) {
 			defer wg.Done()
 			err := dispatch(n, senders)
+			mu.Lock()
 			result.add(err)
+			mu.Unlock()
 		}(n)
 	}
 
