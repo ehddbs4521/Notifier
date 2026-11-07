@@ -63,6 +63,7 @@ type Notification struct {
 	Channel string
 	Title   string
 	Body    string
+	Attempt int
 }
 
 type Sender interface {
@@ -73,7 +74,7 @@ type PushSender struct {
 }
 
 func (p PushSender) Send(n Notification) error {
-	if n.ID%9 == 0 {
+	if n.ID%72 == 0 || (n.ID%9 == 0 && n.Attempt == 1) {
 		time.Sleep(500 * time.Millisecond)
 	} else {
 		time.Sleep(100 * time.Millisecond)
@@ -133,7 +134,7 @@ func sendAllConcurrent(ns []Notification, senders map[string]Sender) Result {
 		wg.Add(1)
 		go func(n Notification) {
 			defer wg.Done()
-			err := sendWithTimeout(n, senders, 300*time.Millisecond)
+			err := sendWithRetry(n, senders, 3)
 			if errors.Is(err, ErrTimeout) {
 				fmt.Println("발송 실패:", err)
 			}
@@ -159,6 +160,25 @@ func sendWithTimeout(n Notification, senders map[string]Sender, timeout time.Dur
 	case <-time.After(timeout):
 		return fmt.Errorf("#%d %s 발송: %w", n.ID, n.Channel, ErrTimeout)
 	}
+}
+
+func sendWithRetry(n Notification, senders map[string]Sender, maxAttempts int) error {
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		n.Attempt = attempt
+		err = sendWithTimeout(n, senders, 300*time.Millisecond)
+		if err == nil {
+			if attempt >= 2 {
+				fmt.Printf("#%d %d번째 시도에서 성공\n", n.ID, attempt)
+			}
+			return nil
+		}
+		if !errors.Is(err, ErrTimeout) {
+			return err
+		}
+		fmt.Printf("#%d 시간 초과 (%d/%d)\n", n.ID, attempt, maxAttempts)
+	}
+	return fmt.Errorf("%d번 시도 후 실패: %w\n", maxAttempts, err)
 }
 
 func main() {
