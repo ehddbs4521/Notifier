@@ -3,11 +3,53 @@ package main
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 var ErrUnknownChannel = errors.New("알 수 없는 채널")
 var ErrEmptyTitle = errors.New("제목이 비어 있음")
 var ErrBodyTooLong = errors.New("내용이 너무 김")
+
+type Result struct {
+	Success        int
+	UnknownChannel int
+	EmptyTitle     int
+	BodyTooLong    int
+}
+
+func (r *Result) add(err error) {
+	if err == nil {
+		r.Success++
+	}
+	if errors.Is(err, ErrUnknownChannel) {
+		r.UnknownChannel++
+	}
+	if errors.Is(err, ErrEmptyTitle) {
+		r.EmptyTitle++
+	}
+	if errors.Is(err, ErrBodyTooLong) {
+		r.BodyTooLong++
+	}
+}
+
+func makeNotifications(count int) []Notification {
+	channels := []string{"push", "sms", "email", "kakao"}
+	notifications := make([]Notification, 0, count)
+	for i := 1; i <= count; i++ {
+		title := fmt.Sprintf("알림 %d", i)
+		if i%10 == 0 {
+			title = ""
+		}
+		body := fmt.Sprintf("내용 %d", i)
+		if i%7 == 0 {
+			body = "아주 긴 내용입니다. 이 문자는 이십 자를 훌쩍 넘어갑니다."
+		}
+		notifications = append(notifications, Notification{
+			ID: i, UserId: fmt.Sprintf("user-%d", i), Channel: channels[i%4], Title: title, Body: body,
+		})
+	}
+	return notifications
+}
 
 type Notification struct {
 	ID      int
@@ -25,10 +67,10 @@ type PushSender struct {
 }
 
 func (p PushSender) Send(n Notification) error {
+	time.Sleep(100 * time.Millisecond)
 	if n.Title == "" {
 		return fmt.Errorf("push 발송 실패: %w", ErrEmptyTitle)
 	}
-	fmt.Printf("[push] #%d → %s: %s - %s\n", n.ID, n.UserId, n.Title, n.Body)
 	return nil
 }
 
@@ -36,11 +78,11 @@ type SMSSender struct {
 }
 
 func (s SMSSender) Send(n Notification) error {
+	time.Sleep(100 * time.Millisecond)
 	length := len([]rune(n.Body))
 	if length > 20 {
 		return fmt.Errorf("sms 발송 실패(%d자): %w", length, ErrBodyTooLong)
 	}
-	fmt.Printf("[sms] #%d → %s: %s\n", n.ID, n.UserId, n.Body)
 	return nil
 }
 
@@ -48,10 +90,10 @@ type EmailSender struct {
 }
 
 func (e EmailSender) Send(n Notification) error {
+	time.Sleep(100 * time.Millisecond)
 	if n.Title == "" {
 		return fmt.Errorf("email 발송 실패: %w", ErrEmptyTitle)
 	}
-	fmt.Printf("[email] #%d → %s / 제목: %s / 내용: %s\n", n.ID, n.UserId, n.Title, n.Body)
 	return nil
 }
 
@@ -63,6 +105,15 @@ func dispatch(n Notification, senders map[string]Sender) error {
 	return sender.Send(n)
 }
 
+func sendAllSequential(ns []Notification, senders map[string]Sender) Result {
+	result := Result{}
+	for _, n := range ns {
+		err := dispatch(n, senders)
+		result.add(err)
+	}
+	return result
+}
+
 func main() {
 
 	senders := make(map[string]Sender)
@@ -70,38 +121,12 @@ func main() {
 	senders["sms"] = SMSSender{}
 	senders["email"] = EmailSender{}
 
-	notifications := []Notification{
-		{ID: 1, UserId: "user-1", Channel: "push", Title: "새 채팅", Body: "안녕하세요!"},
-		{ID: 2, UserId: "user-2", Channel: "sms", Title: "인증번호", Body: "123456"},
-		{ID: 3, UserId: "user-3", Channel: "email", Title: "주간 소식", Body: "이번 주 인기글을 확인하세요"},
-		{ID: 4, UserId: "user-4", Channel: "kakao", Title: "이벤트", Body: "쿠폰이 도착했어요"},
-		{ID: 5, UserId: "user-5", Channel: "sms", Title: "인증번호", Body: "인증번호는 123456입니다. 타인에게 절대 알려주지 마세요."},
-		{ID: 6, UserId: "user-6", Channel: "push", Title: "", Body: "제목 없는 알림"},
-	}
+	ns := makeNotifications(100)
 
-	successCount := 0
-	ErrUnknownChannelCount := 0
-	ErrEmptyTitleCount := 0
-	ErrBodyTooLongCount := 0
-	for _, n := range notifications {
-		err := dispatch(n, senders)
-		if err != nil {
-			if errors.Is(err, ErrEmptyTitle) {
-				ErrEmptyTitleCount++
-			}
-			if errors.Is(err, ErrBodyTooLong) {
-				ErrBodyTooLongCount++
-			}
-			if errors.Is(err, ErrUnknownChannel) {
-				ErrUnknownChannelCount++
-			}
-			fmt.Printf("발송 실패 #%d: %s\n", n.ID, err.Error())
-		} else {
-			successCount++
-		}
-	}
+	start := time.Now() // 시작 시각
+	r := sendAllSequential(ns, senders)
+	elapsed := time.Since(start) // 지금까지 걸린 시간
 
-	fmt.Println("---")
-	fmt.Printf("성공 %d건, 실패 %d건\n", successCount, ErrUnknownChannelCount+ErrEmptyTitleCount+ErrBodyTooLongCount)
-	fmt.Printf("실패 사유: 알 수 없는 채널 %d건, 내용 오류 %d건\n", ErrUnknownChannelCount, ErrEmptyTitleCount+ErrBodyTooLongCount)
+	failCount := r.UnknownChannel + r.EmptyTitle + r.BodyTooLong
+	fmt.Printf("[순차] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d) / 걸린 시간 %.2fs", r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, elapsed.Seconds())
 }
