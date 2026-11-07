@@ -10,12 +10,14 @@ import (
 var ErrUnknownChannel = errors.New("알 수 없는 채널")
 var ErrEmptyTitle = errors.New("제목이 비어 있음")
 var ErrBodyTooLong = errors.New("내용이 너무 김")
+var ErrTimeout = errors.New("시간 초과")
 
 type Result struct {
 	Success        int
 	UnknownChannel int
 	EmptyTitle     int
 	BodyTooLong    int
+	Timeout        int
 }
 
 func (r *Result) add(err error) {
@@ -30,6 +32,9 @@ func (r *Result) add(err error) {
 	}
 	if errors.Is(err, ErrBodyTooLong) {
 		r.BodyTooLong++
+	}
+	if errors.Is(err, ErrTimeout) {
+		r.Timeout++
 	}
 }
 
@@ -68,7 +73,11 @@ type PushSender struct {
 }
 
 func (p PushSender) Send(n Notification) error {
-	time.Sleep(100 * time.Millisecond)
+	if n.ID%9 == 0 {
+		time.Sleep(500 * time.Millisecond)
+	} else {
+		time.Sleep(100 * time.Millisecond)
+	}
 	if n.Title == "" {
 		return fmt.Errorf("push 발송 실패: %w", ErrEmptyTitle)
 	}
@@ -124,7 +133,10 @@ func sendAllConcurrent(ns []Notification, senders map[string]Sender) Result {
 		wg.Add(1)
 		go func(n Notification) {
 			defer wg.Done()
-			err := dispatch(n, senders)
+			err := sendWithTimeout(n, senders, 300*time.Millisecond)
+			if errors.Is(err, ErrTimeout) {
+				fmt.Println("발송 실패:", err)
+			}
 			mu.Lock()
 			result.add(err)
 			mu.Unlock()
@@ -133,6 +145,20 @@ func sendAllConcurrent(ns []Notification, senders map[string]Sender) Result {
 
 	wg.Wait()
 	return result
+}
+
+func sendWithTimeout(n Notification, senders map[string]Sender, timeout time.Duration) error {
+	ch := make(chan error, 1)
+	go func() {
+		ch <- dispatch(n, senders)
+	}()
+
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("#%d %s 발송: %w", n.ID, n.Channel, ErrTimeout)
+	}
 }
 
 func main() {
@@ -145,16 +171,10 @@ func main() {
 	ns := makeNotifications(100)
 
 	start := time.Now()
-	r := sendAllSequential(ns, senders)
+	r := sendAllConcurrent(ns, senders)
 	elapsed := time.Since(start)
 
-	failCount := r.UnknownChannel + r.EmptyTitle + r.BodyTooLong
-	fmt.Printf("[순차] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d) / 걸린 시간 %.2fs\n", r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, elapsed.Seconds())
-
-	start = time.Now()
-	r = sendAllConcurrent(ns, senders)
-	elapsed = time.Since(start)
-
-	failCount = r.UnknownChannel + r.EmptyTitle + r.BodyTooLong
-	fmt.Printf("[동시] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d) / 걸린 시간 %.2fs\n", r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, elapsed.Seconds())
+	failCount := r.UnknownChannel + r.EmptyTitle + r.BodyTooLong + r.Timeout
+	fmt.Printf("[동시] 성공 %d건, 실패 %d건 (알 수 없는 채널 %d, 제목 없음 %d, 내용 김 %d, 시간 초과 %d) / 걸린 시간 %.2fs\n",
+		r.Success, failCount, r.UnknownChannel, r.EmptyTitle, r.BodyTooLong, r.Timeout, elapsed.Seconds())
 }
